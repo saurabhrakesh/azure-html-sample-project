@@ -1,1 +1,95 @@
+name: Build and Deploy web app
+on:
+  push:
+    branches:
+      - master
 
+env:
+  AZURE_WEBAPP_NAME: "azure-html-sample-project"
+  AZURE_WEBAPP_PACKAGE_PATH: "."
+  RESOURCEGROUPNAME: "azure-html-sample-project-rg"
+  LOCATION: "South Central US"
+  HOSTINGPLANNAME: "azure-html-sample-project-plan"
+  APPINSIGHTLOCATION: "South Central US"
+  SKU: "S1 Standard" 
+
+jobs:
+  Build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Creating artifact directories
+        run: |
+          mkdir buildartifacts
+          mkdir deploymettemplates
+
+      - name: Archive application
+        run: |
+          zip -qq -r ./buildartifacts/Application.zip ./Application
+
+      - name: Upload application to build arttifact
+        continue-on-error: false
+        uses: action/upload-artifact@v2
+        with:
+          name: buildartifacts
+          path: buildartifacts
+
+      - name: Archive ARMTemplates
+        run: |
+          zip -qq -r ./deploymenttemplates/ArmTemplates.zip ./deploymenttemplates/ArmTemplates.zip
+
+      - name: Upload ARM template to arttifact
+        continue-on-error: false
+        uses: actions/upload-artifact@v2
+        with:
+          name: deploymenttemplates
+          path: deploymenttemplates
+  
+  Deploy:
+    name: Deploy to Azure Web App
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download a build arttifact
+        uses: action/download-artifact@v2
+        continue-on-error: false
+        with:
+          name: buildartifacts
+          path: buildartifacts
+
+      - name: Unzipping Build Artifact
+        run: |
+          unzip -qq ./buildartifacts/Application.zip -d .
+
+      - name: Download Arm template
+        uses: actions/download-artifact@v2
+        continue-on-error: false
+        with:
+          name: deploymenttemplates
+          path: deploymenttemplates
+      
+      - name: Unzipping ARM template
+        run: |
+          unzip -qq ./deploymenttemplates/ArmTemplates.zip -d .
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        continue-on-error: false
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy ARM Template
+        uses: azure/CLI@v1
+        continue-on-error: false
+        with:
+          inlineScript:
+            az group create --name "${{ env.RESOURCEGROUPNAME }}" --location "${{ env.LOCATION }}"
+            az deployment group create --resource-group "${{ env.RESOURCEGROUPNAME }}" --template-file ./ArmTemplates/windows-webapp-template.json --parameters webAppName="${{ env.AZURE_WEBAPP_NAME }}" hostingPlanName="${{ env.HOSTINGPLANNAME }}" appInsightsLocation="${{ env.APPINSIGHTLOCATION }}" sku="${{ env.SKU }}"
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapp-deploy@v2
+        with: 
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          package: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}/Application
